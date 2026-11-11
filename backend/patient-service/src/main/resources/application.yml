@@ -1,0 +1,29 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: patient-service
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5441/patient_db}
+    username: ${DB_USER:medisync}
+    password: ${DB_PASSWORD:medisync}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: none
+  flyway:
+    enabled: true
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP:localhost:9092}
+    producer:
+      acks: all
+eureka:
+  client:
+    service-url:
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka}
+  instance:
+    prefer-ip-address: true
+medisync:
+  jwt:
+    secret: ${JWT_SECRET:medisync-demo-secret-key-change-me-0123456789}
+    expiration-minutes: 480

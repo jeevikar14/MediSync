@@ -1,0 +1,210 @@
+# MediSync - local stack. Start with:  docker compose up -d --build
+name: medisync
+
+x-service-env: &service-env
+  KAFKA_BOOTSTRAP: kafka:29092
+  EUREKA_URL: http://eureka-server:8761/eureka
+  JWT_SECRET: medisync-demo-secret-key-change-me-0123456789
+  DB_USER: medisync
+  DB_PASSWORD: medisync
+
+services:
+  # ------------------------------------------------------------------ databases (one per service)
+  patient-db:
+    image: postgres:16-alpine
+    container_name: medisync-patient-db
+    environment:
+      POSTGRES_DB: patient_db
+      POSTGRES_USER: medisync
+      POSTGRES_PASSWORD: medisync
+    ports: ["5441:5432"]
+    volumes: ["patient-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medisync -d patient_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clinical-db:
+    image: postgres:16-alpine
+    container_name: medisync-clinical-db
+    environment:
+      POSTGRES_DB: clinical_db
+      POSTGRES_USER: medisync
+      POSTGRES_PASSWORD: medisync
+    ports: ["5442:5432"]
+    volumes: ["clinical-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medisync -d clinical_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  appointment-db:
+    image: postgres:16-alpine
+    container_name: medisync-appointment-db
+    environment:
+      POSTGRES_DB: appointment_db
+      POSTGRES_USER: medisync
+      POSTGRES_PASSWORD: medisync
+    ports: ["5443:5432"]
+    volumes: ["appointment-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medisync -d appointment_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  care-db:
+    image: postgres:16-alpine
+    container_name: medisync-care-db
+    environment:
+      POSTGRES_DB: care_db
+      POSTGRES_USER: medisync
+      POSTGRES_PASSWORD: medisync
+    ports: ["5444:5432"]
+    volumes: ["care-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medisync -d care_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  handoff-db:
+    image: postgres:16-alpine
+    container_name: medisync-handoff-db
+    environment:
+      POSTGRES_DB: handoff_db
+      POSTGRES_USER: medisync
+      POSTGRES_PASSWORD: medisync
+    ports: ["5445:5432"]
+    volumes: ["handoff-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medisync -d handoff_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # ------------------------------------------------------------------ messaging
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.3
+    container_name: medisync-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.3
+    container_name: medisync-kafka
+    depends_on: [zookeeper]
+    ports: ["9092:9092"]
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+
+  # Redis is provisioned for future caching (e.g. token blacklist); no service uses it yet.
+  redis:
+    image: redis:7-alpine
+    container_name: medisync-redis
+    ports: ["6379:6379"]
+
+  # ------------------------------------------------------------------ platform
+  eureka-server:
+    build: { context: ./backend, args: { MODULE: eureka-server } }
+    container_name: medisync-eureka
+    environment:
+      EUREKA_HOSTNAME: eureka-server
+    ports: ["8761:8761"]
+
+  api-gateway:
+    build: { context: ./backend, args: { MODULE: api-gateway } }
+    container_name: medisync-gateway
+    environment: *service-env
+    depends_on: [eureka-server]
+    ports: ["8080:8080"]
+    restart: on-failure
+
+  patient-service:
+    build: { context: ./backend, args: { MODULE: patient-service } }
+    container_name: medisync-patient-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://patient-db:5432/patient_db
+    depends_on:
+      patient-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      eureka-server: { condition: service_started }
+    ports: ["8081:8081"]
+    restart: on-failure
+
+  clinical-service:
+    build: { context: ./backend, args: { MODULE: clinical-service } }
+    container_name: medisync-clinical-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://clinical-db:5432/clinical_db
+    depends_on:
+      clinical-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      eureka-server: { condition: service_started }
+    ports: ["8082:8082"]
+    restart: on-failure
+
+  appointment-service:
+    build: { context: ./backend, args: { MODULE: appointment-service } }
+    container_name: medisync-appointment-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://appointment-db:5432/appointment_db
+    depends_on:
+      appointment-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      eureka-server: { condition: service_started }
+    ports: ["8083:8083"]
+    restart: on-failure
+
+  care-orchestrator-service:
+    build: { context: ./backend, args: { MODULE: care-orchestrator-service } }
+    container_name: medisync-care-orchestrator-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://care-db:5432/care_db
+    depends_on:
+      care-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      eureka-server: { condition: service_started }
+    ports: ["8084:8084"]
+    restart: on-failure
+
+  handoff-service:
+    build: { context: ./backend, args: { MODULE: handoff-service } }
+    container_name: medisync-handoff-service
+    environment:
+      <<: *service-env
+      DB_URL: jdbc:postgresql://handoff-db:5432/handoff_db
+    depends_on:
+      handoff-db: { condition: service_healthy }
+      kafka: { condition: service_healthy }
+      eureka-server: { condition: service_started }
+    ports: ["8085:8085"]
+    restart: on-failure
+
+volumes:
+  patient-data:
+  clinical-data:
+  appointment-data:
+  care-data:
+  handoff-data:
